@@ -1,0 +1,358 @@
+module mojo_top (
+    input clk,              // 50MHz clock
+    input rst_n,            // reset button (active low)
+    output led [8],         // 8 user controllable LEDs
+    input cclk,             // configuration clock, AVR ready when high
+    output spi_miso,        // AVR SPI MISO
+    input spi_ss,           // AVR SPI Slave Select
+    input spi_mosi,         // AVR SPI MOSI
+    input spi_sck,          // AVR SPI Clock
+    output spi_channel [4], // AVR general purpose pins (used by default to select ADC channel)
+    input avr_tx,           // AVR TX (FPGA RX)
+    output avr_rx,          // AVR RX (FPGA TX)
+    input avr_rx_busy,      // AVR RX buffer full
+    output io_led [3][8],   // LEDs on IO Shield
+    output io_seg [8],      // 7-segment LEDs on IO Shield
+    output io_sel [4],      // Digit select on IO Shield
+    input io_button [5],    // 5 buttons on IO Shield
+    input io_dip [3][8]     // DIP switches on IO Shield
+  ) {
+  
+  sig rst;                  // reset signal
+
+  
+  .clk(clk) {
+    // The reset conditioner is used to synchronize the reset signal to the FPGA
+    // clock. This ensures the entire FPGA comes out of reset at the same time.
+    reset_conditioner reset_cond;
+    .rst(rst){
+    dff counter[30]; //counter used to cycle through different states
+    counter ctr (#SIZE(3), #DIV(16));//counter to light up led segments   
+    // blinker control the blinky LED and hold time for chekcing in each state
+    fsm state(#INIT(IDLE)) = {IDLE,ADDITION1,ADDITION2,ERROR,SUBSTRACTION,MULTIPLICATION,DIVISION,AND,OR,XOR,CMPEQ,CMPLE,CMPLT,SHL,SHR,SRA,PASS};
+    }
+  }
+  
+  sig alufn[6]; //8-bit input alufn
+  sig a[8]; //8-bit input a 
+  sig b[8]; //8-bit input b
+  sig alu[8]; //8-bit output of alu
+  const X = 29;//constant used to control time before transitioning to next state (increase value to increase delay between states)
+  seven_seg sevenseg3;// led segment 3
+  seven_seg sevenseg2;// led segment 2
+  seven_seg sevenseg1;// led segment 1
+  seven_seg sevenseg0;// led segment 0
+
+  
+  alu alu1;
+  always {
+    reset_cond.in = ~rst_n; // input raw inverted reset signal
+    rst = reset_cond.out;   // conditioned reset
+    
+    led = 8h00;             // turn LEDs off
+    spi_miso = bz;          // not using SPI
+    spi_channel = bzzzz;    // not using flags
+    avr_rx = bz;            // not using serial port
+    
+    io_led = 3x{{8h00}};    // turn LEDs off
+    io_seg = 8hff;          // turn segments off
+    io_sel = 4hf;           // select no digits
+    
+    alu1.clk=clk;
+    alu1.rst=rst;  
+      
+    a = io_dip[0]; //right dip switch controls input a
+    b = io_dip[1]; //middle dip switch controls input b
+    alufn = io_dip[2][5:0]; // first 6-bits of left dip switch controls input alufn
+    
+    // assigning inputs and output of alu    
+    alu1.alufn = alufn; // alufn input to alu module
+    alu1.a = a; //a input to alu module
+    alu1.b = b; //b input to alu module
+    alu = alu1.alu; //alu module output
+
+    io_led[2] = alu; // left leds show output of alu (8bits)
+    io_led[1] = io_dip[1]; // middle leds show input b (8bits)
+    io_led[0] = io_dip[0]; // right leds show input a (8bits)
+    
+    sevenseg0.char = b0110; //does not display anything when in IDLE (normal functioning) state
+    sevenseg1.char = b0110; //does not display anything when in IDLE (normal functioning) state
+    sevenseg2.char = b0110; //does not display anything when in IDLE (normal functioning) state
+    sevenseg3.char = b0110; //does not display anything when in IDLE (normal functioning) state
+    
+    //STATEMACHINE FOR TEST CASES
+    case (state.q) {
+      state.IDLE: //normal functioning alu (without test)
+      counter.d = 0; //clock counter is 0 when in idle state
+        if (io_button[1] == 1){ //pressing "CENTER" button initiates transition to TEST states
+          state.d = state.ADDITION1; //transition to testing the alu
+        }
+    state.ADDITION1: // ADDition: 5+5 = 10
+      alu1.alufn = 6b0; //selects addition operation of alu
+      alu1.a = 8b101; //input a = 5
+      alu1.b = 8b101; //input a = 5
+      alu = alu1.alu; //assigns output of alu module to output of mojo
+      io_led[1] = 8b101; //center 8 leds display 8 bits of input b
+      io_led[0] = 8b101; //right 8 leds display 8 bits of input a
+      sevenseg3.char = b1111; //display nothing
+      sevenseg2.char = b0011; //displays "A" to show testing of adder
+      sevenseg1.char = b0110; //displays "D" to show testing of adder
+      sevenseg0.char = b0110; 
+
+      counter.d = counter.q+1; //continually increases clock counter until delay time is over
+        if (counter.q[X]==1&&alu==8b1010){ //once counter reaches defined value, and output of ALU is equal to manually calculated value (CORRECT ANSWER)
+          counter.d = 0; //reset counter value to 0
+          state.d = state.ADDITION2; //move on to next test case
+        }
+        
+    state.ADDITION2: // ADDition: 5+5 != 12
+      alu1.alufn = 6b0; //selects addition operation of alu
+      alu1.a = 8b101; //input a = 5
+      alu1.b = 8b101; //input a = 5
+      alu = alu1.alu; //assigns output of alu module to output of mojo
+      io_led[1] = 8b101; //center 8 leds display 8 bits of input b
+      io_led[0] = 8b101; //right 8 leds display 8 bits of input a
+      sevenseg3.char = b1111; //display nothing
+      sevenseg2.char = b0011; //displays "A" to show testing of adder
+      sevenseg1.char = b0110; //displays "D" to show testing of adder
+      sevenseg0.char = b0110; 
+
+      counter.d = counter.q+1; 
+        if (counter.q[X]==1&&alu!=8b1100){ 
+          counter.d = 0; 
+          state.d = state.ERROR; 
+        }    
+      state.ERROR: //ADDER ERROR
+      sevenseg3.char= b0111; //displays "E"
+      sevenseg2.char= b1011; //displays "r"
+      sevenseg1.char= b1011; //displays "r"
+      sevenseg0.char = b0011; //displays "A" to show that error is in ADDER unit
+      counter.d = counter.q+1;
+        if (counter.q[X]==1){ //once counter reaches defined value
+          counter.d = 0;
+          state.d = state.SUBSTRACTION;
+          } //move to test the next unit
+    state.SUBSTRACTION://Substraction: 100-50 = 50
+      alu1.alufn = 6b1; 
+      alu1.a = 8b1100100;
+      alu1.b = 8b110010;
+      alu = alu1.alu;   
+      io_led[1] = 8b110010;
+      io_led[0] = 8b1100100;
+      sevenseg3.char = b1111; 
+      sevenseg2.char = b1001; 
+      sevenseg1.char = b1100; 
+      sevenseg0.char = b0100;  
+      counter.d = counter.q+1;
+        if (counter.q[X] ==1&&alu==8b110010){
+          counter.d = 0;
+          state.d = state.MULTIPLICATION;
+        }    
+
+      state.MULTIPLICATION: //Multiplication: 4*8 =32
+      alu1.alufn = 6b10; 
+      alu1.a = 8b100;
+      alu1.b = 8b1000;
+      alu = alu1.alu; 
+      io_led[1] = 8b1000;
+      io_led[0] = 8b100;
+      sevenseg3.char = b1111;
+      sevenseg2.char = b1111;
+      sevenseg1.char = b1111;
+      sevenseg0.char = b1101;     
+      counter.d = counter.q+1;
+        if (counter.q[X] ==1&&alu==8b100000){
+          counter.d = 0;
+          state.d = state.DIVISION;
+        }    
+
+      state.DIVISION: //Division: 10/2 = 5
+      alu1.alufn = 6b11; 
+      alu1.a = 8b1010;
+      alu1.b = 8b10;
+      alu = alu1.alu; 
+      io_led[1] = 8b10;
+      io_led[0] = 8b1010; 
+      sevenseg3.char = b1111;
+      sevenseg2.char = b0110; 
+      sevenseg1.char = b0001; 
+      sevenseg0.char = b1100;    
+      counter.d = counter.q+1;
+        if (counter.q[X] ==1&&alu==8b101){
+          counter.d = 0;
+          state.d = state.AND;
+        } 
+      state.AND: //And: 8b10110001 && 8b11101001 = 8b10100001
+      alu1.alufn = 6b011000; 
+      alu1.a = 8b10110001;
+      alu1.b = 8b11101001;
+      alu = alu1.alu; 
+      io_led[1] = 8b11101001;
+      io_led[0] = 8b10110001; 
+      sevenseg3.char = b1111;
+      sevenseg2.char = b0011; 
+      sevenseg1.char = b1110; 
+      sevenseg0.char = b0110;   
+      counter.d = counter.q+1;
+        if (counter.q[X] ==1&&alu==8b10100001){
+          counter.d = 0;
+          state.d = state.OR;
+        }
+      state.OR: //Or: 8b10101100|| 8b00010110 = 8b10111110
+      alu1.alufn = 6b011110; 
+      alu1.a = 8b10101100;
+      alu1.b = 8b00010110;
+      alu = alu1.alu; 
+      io_led[1] = 8b00010110;
+      io_led[0] = 8b10101100;  
+      sevenseg3.char = b1111;
+      sevenseg2.char = b1111;
+      sevenseg1.char = b0110; 
+      sevenseg0.char = b1011;          
+      counter.d = counter.q+1;
+        if (counter.q[X] ==1&&alu==8b10111110){
+          counter.d = 0;
+          state.d = state.XOR;
+        }
+      state.XOR: //Xor: 8b11110000 ^8b00110011 = 8b11000011
+      alu1.alufn = 6b010110; 
+      alu1.a = 8b11110000;
+      alu1.b = 8b00110011;
+      alu = alu1.alu; 
+      io_led[1] = 8b00110011;
+      io_led[0] = 8b11110000;  
+      sevenseg3.char = b1111;
+      sevenseg2.char = b1101; 
+      sevenseg1.char = b0110; 
+      sevenseg0.char = b1011;            
+      counter.d = counter.q+1;
+        if (counter.q[X] ==1&&alu==8b11000011){
+          counter.d = 0;
+          state.d = state.CMPEQ;
+        }
+      state.CMPEQ: //CMPEQ: 8b10010110 == 8b10010110, result = 8b1
+      alu1.alufn = 6b110011; 
+      alu1.a = 8b10010110;
+      alu1.b = 8b10010110;
+      alu = alu1.alu; 
+      io_led[1] = 8b10010110;
+      io_led[0] = 8b10010110;  
+      sevenseg3.char = b1111; 
+      sevenseg2.char = b0101; 
+      sevenseg1.char = b0111; 
+      sevenseg0.char = b0110;        
+      counter.d = counter.q+1;
+        if (counter.q[X] ==1&&alu==8b1){
+          counter.d = 0;
+          state.d = state.CMPLT;
+        }
+      state.CMPLT: //CMPLT: 8b10001 < 8b11?, result = 8b0
+      alu1.alufn = 6b110101; 
+      alu1.a = 8b10001;
+      alu1.b = 8b11;
+      alu = alu1.alu; 
+      io_led[1] = 8b11;
+      io_led[0] = 8b10001;   
+      sevenseg3.char = b1111;
+      sevenseg2.char = b0101; 
+      sevenseg1.char = b1010; 
+      sevenseg0.char = b0010;         
+      counter.d = counter.q+1;
+        if (counter.q[X] ==1&&alu==8b0){
+          counter.d = 0;
+          state.d = state.CMPLE; 
+        }
+      
+     state.CMPLE: //CMPLE: 8b1 <= 8b1101?, result = 8b1
+      alu1.alufn = 6b110111; 
+      alu1.a = 8b1;
+      alu1.b = 8b1101;
+      alu = alu1.alu; 
+      io_led[1] = 8b1101;
+      io_led[0] = 8b1;  
+      sevenseg3.char = b1111;
+      sevenseg2.char = b0101; 
+      sevenseg1.char = b1010; 
+      sevenseg0.char = b0111;         
+      counter.d = counter.q+1;
+        if (counter.q[X] ==1&&alu==8b1){
+          counter.d = 0;
+          state.d = state.SHL;
+        }
+        
+      state.SHL: //Shift left: 8b1111 << 4 = 8b11110000
+      alu1.alufn = 6b100000; 
+      alu1.a = 8b1111;
+      alu1.b = 8b100;
+      alu = alu1.alu; 
+      io_led[1] = 8b100;
+      io_led[0] = 8b1111;
+      sevenseg3.char = b1111;
+      sevenseg2.char = b1001; 
+      sevenseg1.char = b1101; 
+      sevenseg0.char = b1010;             
+      counter.d = counter.q+1;
+        if (counter.q[X] ==1&&alu==8b11110000){
+          counter.d = 0;
+          state.d = state.SHR;
+        }
+     
+      state.SHR: //Shift right: 8b10110000 >> 2 = 8b101100
+      alu1.alufn = 6b100001; 
+      alu1.a = 8b10110000;
+      alu1.b = 8b10;
+      alu = alu1.alu; 
+      io_led[1] = 8b10;
+      io_led[0] = 8b10110000; 
+      sevenseg3.char = b1111;  
+      sevenseg2.char = b1001; 
+      sevenseg1.char = b1101; 
+      sevenseg0.char = b1011;         
+      counter.d = counter.q+1;
+        if (counter.q[X] ==1&&alu==8b101100){
+          counter.d = 0;
+          state.d = state.SRA;
+        }
+        
+      state.SRA: //SRA: 8b10110000 >>> 2 = 8b11101100
+      alu1.alufn = 6b100011; 
+      alu1.a = 8b10110000;
+      alu1.b = 8b10;
+      alu = alu1.alu; 
+      io_led[1] = 8b10;
+      io_led[0] = 8b10110000; 
+      sevenseg3.char = b1111; 
+      sevenseg2.char = b1001; 
+      sevenseg1.char = b1011; 
+      sevenseg0.char = b0011;            
+      counter.d = counter.q+1;
+        if (counter.q[X] ==1&&alu==8b11101100){
+          counter.d = 0;
+          state.d = state.PASS;
+        }
+       state.PASS:
+       counter.d = counter.q+1;
+       if (counter.q[X]==1){
+          counter.d = 0;
+          state.d = state.IDLE;} //return to statestate(IDLE state)
+
+  }
+     case(ctr.value){
+      0:
+        io_seg =~sevenseg0.segs; 
+        io_sel = ~4b1;
+      1: 
+        io_seg=~sevenseg1.segs;
+        io_sel = ~4b10;
+      2:
+        io_seg =~sevenseg2.segs;          
+        io_sel = ~4b100;
+      3: 
+        io_seg=~sevenseg3.segs;
+        io_sel = ~4b1000;
+      default:
+        io_seg=~sevenseg0.segs;
+        io_sel = ~4b1;                
+    }
+}
+}

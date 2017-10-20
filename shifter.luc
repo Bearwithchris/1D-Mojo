@@ -1,0 +1,82 @@
+module shifter (
+    input clk,  // clock
+    input rst,  // reset
+    input alufn[6],
+    input a[8],
+    input b[8],
+    output out[8]
+  ) {
+  sig x[8];
+  var char;
+  var i;
+  
+  always {
+    out=8b0;
+    case(alufn[1:0]){
+        b00: //shift left
+          //the last bit represent 1 bit shift
+          x=a;
+          if (b[0]){
+            x=x<<1;
+          }
+          //the second last bit represent 2 bit shift
+          if (b[1]){
+            x=x<<2;
+          }
+          //the third last bit represent 4 bit shift
+          if (b[2]){
+            x=x<<4;
+          }
+          out=x;
+        b01: //shift right
+          x=a;
+          //the last bit represent 1 bit shift
+          if (b[0]){
+            x=x>>1;
+          }
+          //the second last bit represent 2 bit shift
+          if (b[1]){
+            x=x>>2;
+          }
+          //the third last bit represent 4 bit shift
+          if (b[2]){
+            x=x>>4;
+          }
+          out=x;       
+        b11: //shift arthimetic
+          char=a[7];
+          x=a;
+          //the last bit represent 1 bit shift
+          if (b[0]){
+            for (i=0;i<7;i++){
+              x[i]=x[i+1];
+            }
+            //fill the shifted bits with a[7]
+            x[7]=char;
+          }
+          //the second last bit represent 2 bit shift
+          if (b[1]){
+            for (i=0;i<6;i++){
+              x[i]=x[i+2];
+            }
+            //fill the shifted bits with a[7]
+            x[7]=char;
+            x[6]=char;
+          }
+          //the third last bit represent 4 bit shift
+          if (b[2]){
+            for (i=0;i<4;i++){
+              x[i]=x[i+4];
+            }
+            //fill the shifted bits with a[7]
+            x[7]=char;
+            x[6]=char;
+            x[5]=char;
+            x[4]=char;
+          }
+          out=x;
+        
+        }
+    
+  }
+}

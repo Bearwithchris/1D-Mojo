@@ -1,0 +1,65 @@
+module adder (
+    input clk,              // 50MHz clock
+    input rst_n,            // reset button (active low)
+
+    //Non-default inputs 
+    input alufn[6], //alufn deciders
+    input a[8], //First 8bit input
+    input b[8], //Second 8 bit input
+    
+    //Non-default outputs
+    output sum[8], //after the calculation outputs
+    output z, //Zero compator
+    output v, //overFlow coparator
+    output n,  // negative comparator
+    
+    //Testing
+    output led[8]
+  ) {
+  
+  sig rst;                  // reset signal
+  sig sumtemp[9];           // temperoraliy hold the sum value
+  sig sumsvn[9];            // s,v,n calculations
+  
+  
+  .clk(clk) {
+    // The reset conditioner is used to synchronize the reset signal to the FPGA
+    // clock. This ensures the entire FPGA comes out of reset at the same time.
+    reset_conditioner reset_cond;
+  }
+  
+  always {
+    reset_cond.in = ~rst_n; // input raw inverted reset signal
+    rst = reset_cond.out;   // conditioned reset
+    
+    sumtemp=9b000000000; //initialise the tempSingle
+    led=8b00000000;     // initialise the led to be all zeros
+    
+    
+    sumsvn=a-b;
+    case(alufn[1:0]){
+      b00: //addition
+        sumtemp=a+b;
+        led=sumtemp;//Testing
+      b01: //subtraction
+        sumtemp=a-b;
+        led=sumtemp;//Testing
+      b10: //multiplication
+        sumtemp=a*b;
+        led=sumtemp;//Testing
+      b11: //division
+        sumtemp=a/b;
+        led=sumtemp;//Testing
+    }
+    
+     sum = sumtemp;
+     //sumtemp=a-b;
+     v = (a[7] & ~b[7] & (~sumsvn[7])) | ((~a[7])&(b[7])&sumsvn[7]);
+     n = sumsvn[7];
+     z = ~(sumsvn[0]|sumsvn[1]|sumsvn[2]|sumsvn[3]|sumsvn[4]|sumsvn[5]|sumsvn[6]|sumsvn[7]);
+
+  }
+  
+
+  
+}
